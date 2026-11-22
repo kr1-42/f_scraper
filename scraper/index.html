@@ -1,0 +1,123 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cheapest round trips</title>
+<style>
+  body{font:16px system-ui;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#222}
+  form{display:flex;gap:.75rem;flex-wrap:wrap;align-items:end;margin-bottom:1.5rem}
+  label{display:flex;flex-direction:column;font-size:.8rem;color:#666;gap:.2rem}
+  input,button{font:inherit;padding:.45rem .6rem}
+  button{cursor:pointer}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:.45rem .5rem;border-bottom:1px solid #eee;text-align:left}
+  .price{font-weight:600;text-align:right}
+  .tag{font-size:.75rem;padding:.1rem .4rem;border-radius:4px;background:#eef}
+  .tag.bus{background:#efe}
+  .err{color:#a40;font-size:.85rem}
+  small{color:#777}
+</style>
+<h1>Cheapest round trips</h1>
+<p><small>Ryanair, from Pisa Airport &amp; Firenze Peretola</small></p>
+<p id="tabs"><label><input type="radio" name="mode" value="f" checked> Round trip</label>
+  <label><input type="radio" name="mode" value="g"> Cheap trips (no Italy)</label>
+  <label><input type="radio" name="mode" value="h"> Find best dates</label></p>
+<form id="f">
+  <label>Depart <input type="date" name="depart" required></label>
+  <label>Return <input type="date" name="return" required></label>
+  <label>Destination (optional)
+    <input name="destination" placeholder="blank = anywhere · airport code, e.g. BCN"></label>
+  <button>Search</button>
+</form>
+<form id="g" hidden>
+  <label>Depart <input type="date" name="day" required></label>
+  <label>Return <input type="date" name="return" required></label>
+  <label>Max flights total (optional) <input type="number" name="max" min="0" step="1" placeholder="e.g. 100"></label>
+  <label><span>Whole trip</span><span><input type="checkbox" name="stays" value="1"> add Airbnb stays</span></label>
+  <label>Max stay total (optional) <input type="number" name="max_stay" min="0" step="1" placeholder="e.g. 150"></label>
+  <button>Search</button>
+</form>
+<form id="h" hidden>
+  <label>Destination <input name="destination" required placeholder="city, airport code, country or region"></label>
+  <label>Earliest leave <input type="date" name="from" required></label>
+  <label>Latest return <input type="date" name="to" required></label>
+  <label>Min nights <input type="number" name="min_nights" min="1" value="2" style="width:5rem"></label>
+  <label>Max nights <input type="number" name="max_nights" min="1" value="5" style="width:5rem"></label>
+  <label>Max flights total <input type="number" name="max" min="0" placeholder="optional"></label>
+  <label><span>Whole trip</span><span><input type="checkbox" name="stays" value="1"> add Airbnb stays</span></label>
+  <label>Max stay total <input type="number" name="max_stay" min="0" placeholder="optional"></label>
+  <button>Search</button>
+</form>
+<div id="status"></div>
+<table id="t"></table>
+<p id="more" style="text-align:center;color:#777;min-height:2rem"></p>
+<script>
+const f = document.getElementById('f'), t = document.getElementById('t'), s = document.getElementById('status');
+const fmt = d => d.slice(5,10) + ' ' + d.slice(11,16);
+const esc = x => String(x ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const dur = (a,b) => { const m = Math.round((new Date(b) - new Date(a)) / 60000); return Math.floor(m/60) + 'h' + String(m%60).padStart(2,'0'); };
+const leg = o => `<div>${fmt(o.departure)} → ${o.arrival.slice(11,16)} <small>${dur(o.departure,o.arrival)} · ${esc(o.carrier_ref)} · ${o.price.toFixed(2)}</small></div>`;
+const rows = d => {
+  const stays = d.trips.some(x => x.stays.length);
+  const stayCell = x => x.stays.length ? x.stays.map(y => `<div><a href="${esc(y.url)}" target="_blank" rel="noopener">${esc(y.title)}</a>
+      <br><small>${y.price_total.toFixed(0)} total · ${y.per_night.toFixed(0)}/night · ${y.nights} nights ${esc(y.rating)} ${esc(y.details)}</small></div>`).join('')
+    : '<small>no stay found</small>';
+  return '<tr><th>Destination</th><th>From</th><th>Outbound <small>(time, duration, flight, price)</small></th><th>Return</th>' +
+    (stays ? '<th>Cheapest stays</th>' : '') + `<th class="price">${stays ? 'Flights<br>+ stay' : 'Total'}</th></tr>` +
+    d.trips.map(x => `<tr><td><b>${esc(x.out.destination_name)}</b><br><small>${esc(x.destination)}</small></td>
+      <td>${esc(x.out.origin_name)}</td><td>${leg(x.out)}</td><td>${leg(x.back)}</td>
+      ${stays ? `<td>${stayCell(x)}</td>` : ''}
+      <td class="price">${stays && x.trip_total != null ? `<b>${x.trip_total.toFixed(2)}</b><br><small>flights ${x.price.toFixed(2)}</small>` : x.price.toFixed(2)} ${x.currency}</td></tr>`).join('');
+};
+const errs = d => d.errors.map(x => `<div class="err">${esc(x)}</div>`).join('');
+const show = d => {
+  if (d.error) { s.textContent = d.error; return; }
+  s.innerHTML = errs(d) + (d.trips.length ? '' : '<p>No trips found.</p>');
+  t.innerHTML = rows(d);
+};
+const g = document.getElementById('g'), hf = document.getElementById('h');
+const run = (form, url) => async e => {
+  e.preventDefault(); feed.stop(); t.innerHTML = ''; s.textContent = 'Searching…';
+  show(await (await fetch(url + new URLSearchParams(new FormData(form)))).json());
+};
+f.onsubmit = run(f, '/api/search?');
+hf.onsubmit = run(hf, '/api/dates?');
+
+// "Cheap trips": results arrive in pages for the same dates. Each time you reach the end of the list,
+// the next page is fetched (the server looks up Airbnb stays only for that page).
+const more = document.getElementById('more');
+const feed = {
+  token: 0, active: false, loading: false, params: null, offset: 0, shown: 0,
+  stop() { this.token++; this.active = false; this.loading = false; more.textContent = ''; },
+  start(params) { this.stop(); this.active = true; this.params = params; this.offset = 0; this.shown = 0; t.innerHTML = ''; this.next(); },
+  async next() {
+    if (!this.active || this.loading) return;
+    const token = this.token, first = this.offset === 0, p = new URLSearchParams(this.params);
+    p.set('offset', this.offset);
+    this.loading = true; (first ? s : more).textContent = first ? 'Searching…' : 'Loading more…';
+    let d;
+    try { d = await (await fetch('/api/cheap?' + p)).json(); } catch (e) { d = {error: String(e)}; }
+    if (token !== this.token) return;  // a newer search replaced this one
+    this.loading = false;
+    if (d.error) { (first ? s : more).textContent = d.error; this.active = false; return; }
+    if (first) s.innerHTML = '';
+    if (d.errors.length) s.insertAdjacentHTML('beforeend', errs(d));
+    this.shown += d.trips.length; this.offset = d.next_offset;
+    if (d.trips.length) t.insertAdjacentHTML('beforeend', '<tbody>' + rows(d) + '</tbody>');
+    if (!d.has_more) {
+      this.active = false;
+      more.textContent = this.shown ? `End of results · ${this.shown} trip${this.shown === 1 ? '' : 's'}` : 'No trips found.';
+      return;
+    }
+    more.textContent = '';
+    io.unobserve(more); io.observe(more);  // re-check: if the end is still on screen, keep going
+  },
+};
+const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) feed.next(); }, {rootMargin: '300px'});
+io.observe(more);
+g.onsubmit = e => { e.preventDefault(); feed.start(new URLSearchParams(new FormData(g))); };
+
+document.getElementById('tabs').onchange = e => {
+  feed.stop();
+  f.hidden = e.target.value !== 'f'; g.hidden = e.target.value !== 'g'; hf.hidden = e.target.value !== 'h'; t.innerHTML = ''; s.textContent = '';
+};
+</script>
